@@ -225,12 +225,14 @@ def main():
 											   window_size=args.window_size,
 											   batch_size=args.batch_size,
 											   num_threads=args.n_jobs,
+											   use_instrument=args.use_instrument,
 											   max_files_in_ram=args.max_files_in_ram)
 
 	val_generator = utils.get_data_generator(midi_files[val_split_index:],
 											 window_size=args.window_size,
 											 batch_size=args.batch_size,
 											 num_threads=args.n_jobs,
+											 use_instrument=args.use_instrument,
 											 max_files_in_ram=args.max_files_in_ram)
 
 	model, epoch = get_model(args)

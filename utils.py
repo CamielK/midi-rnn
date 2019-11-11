@@ -46,7 +46,7 @@ def create_experiment_dir(experiment_dir, verbose=False):
 	if experiment_dir != 'experiments/default' and \
 			os.path.exists(experiment_dir):
 		# raise an error
-		raise Exception('Error: Invalid --experiemnt_dir, {} already exists' \
+		raise Exception('Error: Invalid --experiment_dir, {} already exists' \
 						.format(experiment_dir))
 
 	# if the experiment directory was not specified, create a new numeric folder
@@ -84,6 +84,7 @@ def get_data_generator(midi_paths,
 					   window_size=20,
 					   batch_size=32,
 					   num_threads=8,
+					   use_instrument=False,
 					   max_files_in_ram=170):
 	if num_threads > 1:
 		# load midi data
@@ -105,7 +106,7 @@ def get_data_generator(midi_paths,
 			parsed = map(parse_midi, load_files)
 		# print('Finished in {:.2f} seconds'.format(time.time() - start_time))
 		# print('parsed, now extracting data')
-		data = _windows_from_monophonic_instruments(parsed, window_size)
+		data = _windows_from_monophonic_instruments(parsed, window_size, use_instrument)
 		batch_index = 0
 		while batch_index + batch_size < len(data[0]):
 			# print('getting data...')
@@ -137,7 +138,7 @@ def load_model_from_checkpoint(model_dir):
 							key=os.path.getctime)
 
 	if newest_checkpoint:
-		epoch = int(newest_checkpoint[-22:-19])
+		epoch = int(newest_checkpoint[len(newest_checkpoint) - 8:len(newest_checkpoint) - 5])
 		model.load_weights(newest_checkpoint)
 
 	return model, epoch
