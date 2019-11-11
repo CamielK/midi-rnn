@@ -85,6 +85,7 @@ def get_data_generator(midi_paths,
 					   batch_size=32,
 					   num_threads=8,
 					   use_instrument=False,
+					   ignore_empty=False,
 					   max_files_in_ram=170):
 	if num_threads > 1:
 		# load midi data
@@ -106,7 +107,7 @@ def get_data_generator(midi_paths,
 			parsed = map(parse_midi, load_files)
 		# print('Finished in {:.2f} seconds'.format(time.time() - start_time))
 		# print('parsed, now extracting data')
-		data = _windows_from_monophonic_instruments(parsed, window_size, use_instrument)
+		data = _windows_from_monophonic_instruments(parsed, window_size, use_instrument, ignore_empty)
 		batch_index = 0
 		while batch_index + batch_size < len(data[0]):
 			# print('getting data...')
@@ -251,7 +252,7 @@ def get_family_id_by_instrument(instrument_id):
 
 # returns X, y data windows from all monophonic instrument
 # tracks in a pretty midi file
-def _windows_from_monophonic_instruments(midi, window_size, use_instrument=False):
+def _windows_from_monophonic_instruments(midi, window_size, use_instrument=False, ignore_empty=False):
 	X, y = [], []
 	for m in midi:
 		if m is not None:
@@ -261,6 +262,9 @@ def _windows_from_monophonic_instruments(midi, window_size, use_instrument=False
 					windows = _encode_sliding_windows(instrument, window_size)
 					for w in windows:
 						x_vals = w[0]
+						if ignore_empty and np.min(w[0][:, 0]) == 1 and w[1][0] == 1:
+							# Window only contains pauses and Y is also a pause.. ignore!
+							continue
 						if use_instrument:
 							# Append instrument class to input
 							instrument_group = instruments[instrument.program]

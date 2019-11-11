@@ -29,7 +29,7 @@ def parse_args():
 							 'rate for the chosen optimizer is used.')
 	parser.add_argument('--window_size', type=int, default=20,
 						help='Window size for RNN input per step.')
-	parser.add_argument('--batch_size', type=int, default=32,
+	parser.add_argument('--batch_size', type=int, default=64,
 						help='minibatch size')
 	parser.add_argument('--num_epochs', type=int, default=10,
 						help='number of epochs before stopping training.')
@@ -47,14 +47,16 @@ def parse_args():
 	parser.add_argument('--message', '-m', type=str,
 						help='a note to self about the experiment saved to message.txt ' \
 							 'in --experiment_dir.')
-	parser.add_argument('--n_jobs', '-j', type=int, default=1,
+	parser.add_argument('--n_jobs', '-j', type=int, default=2,
 						help='Number of CPUs to use when loading and parsing midi files.')
-	parser.add_argument('--max_files_in_ram', default=25, type=int,
+	parser.add_argument('--max_files_in_ram', default=80, type=int,
 						help='The maximum number of midi files to load into RAM at once.' \
 							 ' A higher value trains faster but uses more RAM. A lower value ' \
 							 'uses less RAM but takes significantly longer to train.')
 	parser.add_argument('--use_instrument', type=bool, default=False,
 						help='Use instrument type in input.')
+	parser.add_argument('--ignore_empty', type=bool, default=False,
+						help='Ignore empty windows.')
 	parser.add_argument('--use_simple', type=bool, default=False,
 						help='Use the basic network architecture')
 	return parser.parse_args()
@@ -156,7 +158,7 @@ def get_callbacks(experiment_dir, checkpoint_monitor='val_acc'):
 	# save model checkpoints
 	filepath = os.path.join(experiment_dir,
 							'checkpoints',
-							'checkpoint-epoch_{epoch:03d}-val_acc_{val_acc:.3f}.hdf5')
+							'checkpoint-epoch_{epoch:03d}.hdf5')
 
 	callbacks.append(ModelCheckpoint(filepath,
 									 monitor=checkpoint_monitor,
@@ -176,7 +178,9 @@ def get_callbacks(experiment_dir, checkpoint_monitor='val_acc'):
 	callbacks.append(TensorBoard(log_dir=os.path.join(experiment_dir, 'tensorboard-logs'),
 								 histogram_freq=0,
 								 write_graph=True,
-								 write_images=False))
+								 write_images=False,
+								 update_freq='batch',
+								 profile_batch=0))
 
 	return callbacks
 
@@ -226,6 +230,7 @@ def main():
 											   batch_size=args.batch_size,
 											   num_threads=args.n_jobs,
 											   use_instrument=args.use_instrument,
+											   ignore_empty=args.ignore_empty,
 											   max_files_in_ram=args.max_files_in_ram)
 
 	val_generator = utils.get_data_generator(midi_files[val_split_index:],
@@ -233,6 +238,7 @@ def main():
 											 batch_size=args.batch_size,
 											 num_threads=args.n_jobs,
 											 use_instrument=args.use_instrument,
+											 ignore_empty=args.ignore_empty,
 											 max_files_in_ram=args.max_files_in_ram)
 
 	model, epoch = get_model(args)
