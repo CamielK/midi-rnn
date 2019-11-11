@@ -2,3 +2,5 @@ venv
 experiments/*
 !experiments/.gitkeep
 *.pyc
+
+.idea/
