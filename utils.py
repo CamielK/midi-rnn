@@ -86,6 +86,7 @@ def get_data_generator(midi_paths,
 					   num_threads=8,
 					   use_instrument=False,
 					   ignore_empty=False,
+					   encode_section=False,
 					   max_files_in_ram=170):
 	if num_threads > 1:
 		# load midi data
@@ -107,7 +108,7 @@ def get_data_generator(midi_paths,
 			parsed = map(parse_midi, load_files)
 		# print('Finished in {:.2f} seconds'.format(time.time() - start_time))
 		# print('parsed, now extracting data')
-		data = _windows_from_monophonic_instruments(parsed, window_size, use_instrument, ignore_empty)
+		data = _windows_from_monophonic_instruments(parsed, window_size, use_instrument, ignore_empty, encode_section)
 		batch_index = 0
 		while batch_index + batch_size < len(data[0]):
 			# print('getting data...')
@@ -234,7 +235,7 @@ def _network_output_to_midi(windows,
 # Read instruments (map program id to instrument family)
 instruments = defaultdict(lambda: 0)  # Default = 0 (piano)
 families = []
-with open('../instruments.json') as json_file:
+with open('instruments.json') as json_file:
 	data = json.load(json_file)
 	for instrument in data:
 		instrument_id = int(instrument['hexcode'], 16)
@@ -246,13 +247,13 @@ with open('../instruments.json') as json_file:
 		instruments[instrument_id] = fam_id
 
 
-def get_family_id_by_instrument(instrument_id):
-	return instruments[instrument_id]
+def get_family_id_by_instrument_normalized(instrument_id):
+	return instruments[instrument_id] / len(families)
 
 
 # returns X, y data windows from all monophonic instrument
 # tracks in a pretty midi file
-def _windows_from_monophonic_instruments(midi, window_size, use_instrument=False, ignore_empty=False):
+def _windows_from_monophonic_instruments(midi, window_size, use_instrument=False, ignore_empty=False, encode_section=False):
 	X, y = [], []
 	for m in midi:
 		if m is not None:
@@ -260,15 +261,23 @@ def _windows_from_monophonic_instruments(midi, window_size, use_instrument=False
 			for instrument in melody_instruments:
 				if len(instrument.notes) > window_size:
 					windows = _encode_sliding_windows(instrument, window_size)
-					for w in windows:
+					instrument_group = get_family_id_by_instrument_normalized(instrument.program)
+					track_length = len(windows)
+					for section, w in enumerate(windows):
 						x_vals = w[0]
 						if ignore_empty and np.min(w[0][:, 0]) == 1 and w[1][0] == 1:
 							# Window only contains pauses and Y is also a pause.. ignore!
 							continue
 						if use_instrument:
-							# Append instrument class to input
-							instrument_group = instruments[instrument.program]
-							x_vals = np.insert(w[0], 0, instrument_group, axis=1)
+							# Append instrument class to input (normalized to 0>1)
+							x_vals = np.insert(x_vals, 0, instrument_group, axis=1)
+						if encode_section:
+							# Append track section to input (try to model intro, chorus, outro, etc)
+							sections = [0] * 4
+							active_section = int((section / track_length) * 4)
+							sections[active_section] = 1
+							section_matrix = np.array([sections,] * window_size)
+							x_vals = np.concatenate((section_matrix, x_vals), axis=1)
 						X.append(x_vals)
 						y.append(w[1])
 	return (np.asarray(X), np.asarray(y))

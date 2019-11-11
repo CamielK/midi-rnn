@@ -57,6 +57,8 @@ def parse_args():
 						help='Use instrument type in input.')
 	parser.add_argument('--ignore_empty', type=bool, default=False,
 						help='Ignore empty windows.')
+	parser.add_argument('--encode_section', type=bool, default=False,
+						help='Encode source track sections.')
 	parser.add_argument('--use_simple', type=bool, default=False,
 						help='Use the basic network architecture')
 	return parser.parse_args()
@@ -70,13 +72,19 @@ def get_model(args, experiment_dir=None):
 	if not experiment_dir:
 		model = Sequential()
 
+		input_size = OUTPUT_SIZE
+		if args.use_instrument:
+			input_size += 1  # Add 1 instrument input
+		if args.encode_section:
+			input_size += 4  # Add 4 section inputs
+
 		if args.use_simple:
 			for layer_index in range(args.num_layers):
 				kwargs = dict()
 				kwargs['units'] = args.rnn_size
 				# if this is the first layer
 				if layer_index == 0:
-					kwargs['input_shape'] = (args.window_size, OUTPUT_SIZE + (1 if args.use_instrument else 0))
+					kwargs['input_shape'] = (args.window_size, input_size)
 					if args.num_layers == 1:
 						kwargs['return_sequences'] = False
 					else:
@@ -98,7 +106,7 @@ def get_model(args, experiment_dir=None):
 			model.add(LSTM(
 				units=args.rnn_size,
 				return_sequences=True,
-				input_shape=(args.window_size, OUTPUT_SIZE + (1 if args.use_instrument else 0))
+				input_shape=(args.window_size, input_size)
 			))
 			model.add(Dropout(rate=args.dropout))
 
@@ -231,6 +239,7 @@ def main():
 											   num_threads=args.n_jobs,
 											   use_instrument=args.use_instrument,
 											   ignore_empty=args.ignore_empty,
+											   encode_section=args.encode_section,
 											   max_files_in_ram=args.max_files_in_ram)
 
 	val_generator = utils.get_data_generator(midi_files[val_split_index:],
@@ -239,6 +248,7 @@ def main():
 											 num_threads=args.n_jobs,
 											 use_instrument=args.use_instrument,
 											 ignore_empty=args.ignore_empty,
+											 encode_section=args.encode_section,
 											 max_files_in_ram=args.max_files_in_ram)
 
 	model, epoch = get_model(args)

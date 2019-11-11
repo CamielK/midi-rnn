@@ -27,7 +27,7 @@ def parse_args():
 							 'gm-level-1-sound-set for a full list of instrument names.')
 	parser.add_argument('--num_files', type=int, default=10,
 						help='number of midi files to sample.')
-	parser.add_argument('--file_length', type=int, default=1000,
+	parser.add_argument('--file_length', type=int, default=100,
 						help='Length of each file, measured in 16th notes.')
 	parser.add_argument('--prime_file', type=str,
 						help='prime generated files from midi file. If not specified ' \
@@ -36,6 +36,12 @@ def parse_args():
 	parser.add_argument('--data_dir', type=str, default='data/midi',
 						help='data directory containing .mid files to use for' \
 							 'seeding/priming. Required if --prime_file is not specified')
+	parser.add_argument('--use_instrument', type=bool, default=False,
+						help='Use instrument type in input.')
+	parser.add_argument('--ignore_empty', type=bool, default=False,
+						help='Ignore empty windows.')
+	parser.add_argument('--encode_section', type=bool, default=False,
+						help='Encode source track sections.')
 	parser.add_argument('--multi_instruments', type=bool, default=False,
 						help='Use multiple instruments to generate a single sample from the prime file.')
 	return parser.parse_args()
@@ -95,6 +101,9 @@ def main():
 											  window_size=window_size,
 											  batch_size=32,
 											  num_threads=1,
+											  use_instrument=args.use_instrument,
+											  ignore_empty=args.ignore_empty,
+											  encode_section=args.encode_section,
 											  max_files_in_ram=10)
 
 	# validate midi instrument name
@@ -150,8 +159,17 @@ def main():
 			generated = []
 			buf = np.copy(seed).tolist()
 			while len(generated) < args.file_length:
+
 				# Add instrument class to input
-				buf_expanded = [[instrument_group] + x for x in buf]
+				if args.use_instrument:
+					buf_expanded = [[instrument_group] + x for x in buf]
+
+				# Add section encoding to input
+				if args.encode_section:
+					sections = [0] * 4
+					active_section = int((len(generated) / args.file_length) * 4)
+					sections[active_section] = 1
+					buf_expanded = [sections + x for x in buf]
 
 				# Get prediction
 				arr = np.expand_dims(np.asarray(buf_expanded), 0)
@@ -177,7 +195,9 @@ def main():
 
 		# Save midi
 		time = datetime.now().strftime("%Y%m%d%H%M%S")
-		generated_midi.write(f"{args.save_dir}/sampled_{time}.mid")
+		sample_name = f"{args.save_dir}/sampled_{time}.mid"
+		print(f"Writing generated sample to {sample_name}")
+		generated_midi.write(sample_name)
 
 	else:
 		# generate 10 tracks using random seeds
