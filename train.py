@@ -37,8 +37,8 @@ def parse_args():
                         help='percentage of weights that are turned off every training '\
                         'set step. This is a popular regularization that can help with '\
                         'overfitting. Recommended values are 0.2-0.5')
-    parser.add_argument('--optimizer', 
-                        choices=['sgd', 'rmsprop', 'adagrad', 'adadelta', 
+    parser.add_argument('--optimizer',
+                        choices=['sgd', 'rmsprop', 'adagrad', 'adadelta',
                                  'adam', 'adamax', 'nadam'], default='adam',
                         help='The optimization algorithm to use. '\
                         'See https://keras.io/optimizers for a full list of optimizers.')
@@ -47,44 +47,67 @@ def parse_args():
     parser.add_argument('--message', '-m', type=str,
                         help='a note to self about the experiment saved to message.txt '\
                         'in --experiment_dir.')
-    parser.add_argument('--n_jobs', '-j', type=int, default=1, 
+    parser.add_argument('--n_jobs', '-j', type=int, default=1,
                         help='Number of CPUs to use when loading and parsing midi files.')
     parser.add_argument('--max_files_in_ram', default=25, type=int,
                         help='The maximum number of midi files to load into RAM at once.'\
                         ' A higher value trains faster but uses more RAM. A lower value '\
                         'uses less RAM but takes significantly longer to train.')
+    parser.add_argument('--use_simple', type=bool, default=False,
+                        help='Use the basic network architecture')
     return parser.parse_args()
 
 # create or load a saved model
 # returns the model and the epoch number (>1 if loaded from checkpoint)
 def get_model(args, experiment_dir=None):
-    
+
     epoch = 0
-    
+
     if not experiment_dir:
         model = Sequential()
-        for layer_index in range(args.num_layers):
-            kwargs = dict() 
-            kwargs['units'] = args.rnn_size
-            # if this is the first layer
-            if layer_index == 0:
-                kwargs['input_shape'] = (args.window_size, OUTPUT_SIZE)
-                if args.num_layers == 1:
-                    kwargs['return_sequences'] = False
+
+        if args.use_simple:
+            for layer_index in range(args.num_layers):
+                kwargs = dict()
+                kwargs['units'] = args.rnn_size
+                # if this is the first layer
+                if layer_index == 0:
+                    kwargs['input_shape'] = (args.window_size, OUTPUT_SIZE)
+                    if args.num_layers == 1:
+                        kwargs['return_sequences'] = False
+                    else:
+                        kwargs['return_sequences'] = True
+                    model.add(LSTM(**kwargs))
                 else:
-                    kwargs['return_sequences'] = True
-                model.add(LSTM(**kwargs))
-            else:
-                # if this is a middle layer
-                if not layer_index == args.num_layers - 1:
-                    kwargs['return_sequences'] = True
-                    model.add(LSTM(**kwargs))
-                else: # this is the last layer
-                    kwargs['return_sequences'] = False
-                    model.add(LSTM(**kwargs))
-            model.add(Dropout(args.dropout))
-        model.add(Dense(OUTPUT_SIZE))
-        model.add(Activation('softmax'))
+                    # if this is a middle layer
+                    if not layer_index == args.num_layers - 1:
+                        kwargs['return_sequences'] = True
+                        model.add(LSTM(**kwargs))
+                    else:  # this is the last layer
+                        kwargs['return_sequences'] = False
+                        model.add(LSTM(**kwargs))
+                model.add(Dropout(args.dropout))
+
+            model.add(Dense(OUTPUT_SIZE))
+            model.add(Activation('softmax'))
+        else:
+            model.add(LSTM(
+                units=args.rnn_size,
+                return_sequences=True,
+                input_shape=(args.window_size, OUTPUT_SIZE)
+            ))
+            model.add(Dropout(rate=args.dropout))
+
+            model.add(LSTM(units=args.rnn_size * 2, return_sequences=True))  # 512
+            model.add(Dropout(rate=args.dropout))
+
+            model.add(LSTM(units=args.rnn_size, return_sequences=False))  # 256
+            model.add(Dense(units=args.rnn_size))  # 256
+            model.add(Dropout(rate=args.dropout))
+
+            model.add(Dense(OUTPUT_SIZE))
+            model.add(Activation('softmax'))
+
     else:
         model, epoch = utils.load_model_from_checkpoint(experiment_dir)
 
@@ -119,38 +142,38 @@ def get_model(args, experiment_dir=None):
     else: # so instead lets use a default (no training occurs anyway)
         optimizer = Adam()
 
-    model.compile(loss='categorical_crossentropy', 
+    model.compile(loss='categorical_crossentropy',
                   optimizer=optimizer,
                   metrics=['accuracy'])
     return model, epoch
 
 def get_callbacks(experiment_dir, checkpoint_monitor='val_acc'):
-    
+
     callbacks = []
-    
+
     # save model checkpoints
-    filepath = os.path.join(experiment_dir, 
-                            'checkpoints', 
+    filepath = os.path.join(experiment_dir,
+                            'checkpoints',
                             'checkpoint-epoch_{epoch:03d}-val_acc_{val_acc:.3f}.hdf5')
 
-    callbacks.append(ModelCheckpoint(filepath, 
-                                     monitor=checkpoint_monitor, 
-                                     verbose=1, 
-                                     save_best_only=False, 
+    callbacks.append(ModelCheckpoint(filepath,
+                                     monitor=checkpoint_monitor,
+                                     verbose=1,
+                                     save_best_only=False,
                                      mode='max'))
 
-    callbacks.append(ReduceLROnPlateau(monitor='val_loss', 
-                                       factor=0.5, 
-                                       patience=3, 
-                                       verbose=1, 
-                                       mode='auto', 
-                                       epsilon=0.0001, 
-                                       cooldown=0, 
+    callbacks.append(ReduceLROnPlateau(monitor='val_loss',
+                                       factor=0.5,
+                                       patience=3,
+                                       verbose=1,
+                                       mode='auto',
+                                       epsilon=0.0001,
+                                       cooldown=0,
                                        min_lr=0))
 
-    callbacks.append(TensorBoard(log_dir=os.path.join(experiment_dir, 'tensorboard-logs'), 
-                                histogram_freq=0, 
-                                write_graph=True, 
+    callbacks.append(TensorBoard(log_dir=os.path.join(experiment_dir, 'tensorboard-logs'),
+                                histogram_freq=0,
+                                write_graph=True,
                                 write_images=False))
 
     return callbacks
@@ -188,7 +211,7 @@ def main():
     if args.message:
         with open(os.path.join(experiment_dir, 'message.txt'), 'w') as f:
             f.write(args.message)
-            utils.log('Wrote {} bytes to {}'.format(len(args.message), 
+            utils.log('Wrote {} bytes to {}'.format(len(args.message),
                 os.path.join(experiment_dir, 'message.txt')), args.verbose)
 
     val_split = 0.2 # use 20 percent for validation
@@ -196,13 +219,13 @@ def main():
 
     # use generators to lazy load train/validation data, ensuring that the
     # user doesn't have to load all midi files into RAM at once
-    train_generator = utils.get_data_generator(midi_files[0:val_split_index], 
+    train_generator = utils.get_data_generator(midi_files[0:val_split_index],
                                                window_size=args.window_size,
                                                batch_size=args.batch_size,
                                                num_threads=args.n_jobs,
                                                max_files_in_ram=args.max_files_in_ram)
 
-    val_generator = utils.get_data_generator(midi_files[val_split_index:], 
+    val_generator = utils.get_data_generator(midi_files[val_split_index:],
                                              window_size=args.window_size,
                                              batch_size=args.batch_size,
                                              num_threads=args.n_jobs,
@@ -217,18 +240,18 @@ def main():
               args.verbose)
 
     callbacks = get_callbacks(experiment_dir)
-    
+
     print('fitting model...')
     # this is a somewhat magic number which is the average number of length-20 windows
     # calculated from ~5K MIDI files from the Lakh MIDI Dataset.
     magic_number = 827
     start_time = time.time()
     model.fit_generator(train_generator,
-                        steps_per_epoch=len(midi_files) * magic_number / args.batch_size, 
+                        steps_per_epoch=len(midi_files) * magic_number / args.batch_size,
                         epochs=args.num_epochs,
-                        validation_data=val_generator, 
+                        validation_data=val_generator,
                         validation_steps=len(midi_files) * 0.2 * magic_number / args.batch_size,
-                        verbose=1, 
+                        verbose=1,
                         callbacks=callbacks,
                         initial_epoch=epoch)
     utils.log('Finished in {:.2f} seconds'.format(time.time() - start_time), args.verbose)
