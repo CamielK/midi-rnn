@@ -53,6 +53,8 @@ def parse_args():
 						help='The maximum number of midi files to load into RAM at once.' \
 							 ' A higher value trains faster but uses more RAM. A lower value ' \
 							 'uses less RAM but takes significantly longer to train.')
+	parser.add_argument('--use_instrument', type=bool, default=False,
+						help='Use instrument type in input.')
 	parser.add_argument('--use_simple', type=bool, default=False,
 						help='Use the basic network architecture')
 	return parser.parse_args()
@@ -72,7 +74,7 @@ def get_model(args, experiment_dir=None):
 				kwargs['units'] = args.rnn_size
 				# if this is the first layer
 				if layer_index == 0:
-					kwargs['input_shape'] = (args.window_size, OUTPUT_SIZE)
+					kwargs['input_shape'] = (args.window_size, OUTPUT_SIZE + (1 if args.use_instrument else 0))
 					if args.num_layers == 1:
 						kwargs['return_sequences'] = False
 					else:
@@ -94,7 +96,7 @@ def get_model(args, experiment_dir=None):
 			model.add(LSTM(
 				units=args.rnn_size,
 				return_sequences=True,
-				input_shape=(args.window_size, OUTPUT_SIZE)
+				input_shape=(args.window_size, OUTPUT_SIZE + (1 if args.use_instrument else 0))
 			))
 			model.add(Dropout(rate=args.dropout))
 

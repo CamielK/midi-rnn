@@ -1,9 +1,13 @@
 #!/usr/bin/env python
 import argparse, os, pdb
+import random
+
 import pretty_midi
+from datetime import datetime
+
 import train
 import utils
-
+import numpy as np
 
 def parse_args():
 	parser = argparse.ArgumentParser(
@@ -32,6 +36,8 @@ def parse_args():
 	parser.add_argument('--data_dir', type=str, default='data/midi',
 						help='data directory containing .mid files to use for' \
 							 'seeding/priming. Required if --prime_file is not specified')
+	parser.add_argument('--multi_instruments', type=bool, default=False,
+						help='Use multiple instruments to generate a single sample from the prime file.')
 	return parser.parse_args()
 
 
@@ -110,15 +116,79 @@ def main():
 					  .format(args.midi_instrument), True)
 			exit(1)
 
-	# generate 10 tracks using random seeds
-	utils.log('Loading seed files...', args.verbose)
-	X, y = next(seed_generator)
-	generated = utils.generate(model, X, window_size,
-							   args.file_length, args.num_files, args.midi_instrument)
-	for i, midi in enumerate(generated):
-		file = os.path.join(args.save_dir, '{}.mid'.format(i + 1))
-		midi.write(file.format(i + 1))
-		utils.log('wrote midi file to {}'.format(file), True)
+	if args.multi_instruments:
+
+		if not args.prime_file:
+			utils.log('Error: You need to specify a prime file when generating a multi instrument track. Exiting.', True)
+			exit(1)
+
+		utils.log(f"Sampling from single seed file: {args.prime_file}", args.verbose)
+
+		generated_midi = pretty_midi.PrettyMIDI(initial_tempo=80)
+
+		source_midi = utils.parse_midi(args.prime_file)
+
+		melody_instruments = source_midi.instruments
+		# melody_instruments = utils.filter_monophonic(source_midi.instruments, 1.0)
+
+		for instrument in melody_instruments:
+			instrument_group = utils.get_family_id_by_instrument(instrument.program)
+
+			# Get source track seed
+			X, y = [], []
+			windows = utils._encode_sliding_windows(instrument, window_size)
+			for w in windows:
+				if np.min(w[0][:, 0]) == 1:
+					# Window only contains pauses and Y is also a pause.. ignore!
+					continue
+				X.append(w[0])
+			if len(X) <= 5:
+				continue
+			seed = X[random.randint(0, len(X) - 1)]
+
+			# Generate track for this instrument
+			generated = []
+			buf = np.copy(seed).tolist()
+			while len(generated) < args.file_length:
+				# Add instrument class to input
+				buf_expanded = [[instrument_group] + x for x in buf]
+
+				# Get prediction
+				arr = np.expand_dims(np.asarray(buf_expanded), 0)
+				pred = model.predict(arr)
+
+				# prob distribution sampling
+				index = np.random.choice(range(0, seed.shape[1]), p=pred[0])
+				pred = np.zeros(seed.shape[1])
+
+				pred[index] = 1
+				generated.append(pred)
+				buf.pop(0)
+				buf.append(pred.tolist())
+
+			# Create instrument
+			instrument = utils._network_output_to_instrument(generated, instrument.program)
+
+			# Add to target midi
+			generated_midi.instruments.append(instrument)
+
+		if len(generated_midi.instruments) == 0:
+			raise Exception(f"Found no monophonic instruments in {args.prime_file}")
+
+		# Save midi
+		time = datetime.now().strftime("%Y%m%d%H%M%S")
+		generated_midi.write(f"{args.save_dir}/sampled_{time}.mid")
+
+	else:
+		# generate 10 tracks using random seeds
+		utils.log('Loading seed files...', args.verbose)
+		X, y = next(seed_generator)
+		generated = utils.generate(model, X, window_size,
+								   args.file_length, args.num_files, args.midi_instrument)
+		for i, midi in enumerate(generated):
+			file = os.path.join(args.save_dir, '{}.mid'.format(i + 1))
+			midi.write(file.format(i + 1))
+			utils.log('wrote midi file to {}'.format(file), True)
 
 
 if __name__ == '__main__':

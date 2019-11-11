@@ -1,8 +1,10 @@
 import os, glob, random
 import pretty_midi
 import numpy as np
+from collections import defaultdict
 from keras.models import model_from_json
 from multiprocessing import Pool as ThreadPool
+import json
 
 
 def log(message, verbose):
@@ -174,15 +176,11 @@ def generate(model, seeds, window_size, length, num_to_gen, instrument_name):
 	return midis
 
 
-# create a pretty midi file with a single instrument using the one-hot encoding
-# output of keras model.predict.
-def _network_output_to_midi(windows,
-							instrument_name='Acoustic Grand Piano',
+# create a midi instrument using the one-hot encoding output of keras model.predict.
+def _network_output_to_instrument(windows,
+							instrument_program=0,
 							allow_represses=False):
-	# Create a PrettyMIDI object
-	midi = pretty_midi.PrettyMIDI()
-	# Create an Instrument instance for a cello instrument
-	instrument_program = pretty_midi.instrument_name_to_program(instrument_name)
+	# Create an Instrument instance
 	instrument = pretty_midi.Instrument(program=instrument_program)
 
 	cur_note = None  # an invalid note to start with
@@ -213,14 +211,46 @@ def _network_output_to_midi(windows,
 		# update the clock
 		clock = clock + 1.0 / 4
 
-	# Add the cello instrument to the PrettyMIDI object
+	return instrument
+
+# create a pretty midi file with a single instrument using the one-hot encoding
+# output of keras model.predict.
+def _network_output_to_midi(windows,
+							instrument_name='Acoustic Grand Piano',
+							allow_represses=False):
+	# Create a PrettyMIDI object
+	midi = pretty_midi.PrettyMIDI()
+	# Create an Instrument instance
+	instrument_program = pretty_midi.instrument_name_to_program(instrument_name)
+	instrument = _network_output_to_instrument(windows, instrument_program)
+
+	# Add the instrument to the PrettyMIDI object
 	midi.instruments.append(instrument)
 	return midi
 
 
+# Read instruments (map program id to instrument family)
+instruments = defaultdict(lambda: 0)  # Default = 0 (piano)
+families = []
+with open('../instruments.json') as json_file:
+	data = json.load(json_file)
+	for instrument in data:
+		instrument_id = int(instrument['hexcode'], 16)
+		if instrument['family'] in families:
+			fam_id = families.index(instrument['family'])
+		else:
+			fam_id = len(families)
+			families.append(instrument['family'])
+		instruments[instrument_id] = fam_id
+
+
+def get_family_id_by_instrument(instrument_id):
+	return instruments[instrument_id]
+
+
 # returns X, y data windows from all monophonic instrument
 # tracks in a pretty midi file
-def _windows_from_monophonic_instruments(midi, window_size):
+def _windows_from_monophonic_instruments(midi, window_size, use_instrument=False):
 	X, y = [], []
 	for m in midi:
 		if m is not None:
@@ -229,7 +259,12 @@ def _windows_from_monophonic_instruments(midi, window_size):
 				if len(instrument.notes) > window_size:
 					windows = _encode_sliding_windows(instrument, window_size)
 					for w in windows:
-						X.append(w[0])
+						x_vals = w[0]
+						if use_instrument:
+							# Append instrument class to input
+							instrument_group = instruments[instrument.program]
+							x_vals = np.insert(w[0], 0, instrument_group, axis=1)
+						X.append(x_vals)
 						y.append(w[1])
 	return (np.asarray(X), np.asarray(y))
 
