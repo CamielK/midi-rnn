@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import argparse, os, pdb
+import glob
 import random
 
 import pretty_midi
@@ -33,16 +34,18 @@ def parse_args():
 						help='prime generated files from midi file. If not specified ' \
 							 'random windows from the validation dataset will be used for ' \
 							 'for seeding.')
-	parser.add_argument('--data_dir', type=str, default='data/midi',
+	parser.add_argument('--from_checkpoint', type=str,
+						help='Load model from specific checkpoint within experiment_dir')
+	parser.add_argument('--data_dir', type=str, default='data',
 						help='data directory containing .mid files to use for' \
 							 'seeding/priming. Required if --prime_file is not specified')
-	parser.add_argument('--use_instrument', type=bool, default=False,
+	parser.add_argument('--use_instrument', action='store_true',
 						help='Use instrument type in input.')
-	parser.add_argument('--ignore_empty', type=bool, default=False,
+	parser.add_argument('--ignore_empty', action='store_true',
 						help='Ignore empty windows.')
-	parser.add_argument('--encode_section', type=bool, default=False,
+	parser.add_argument('--encode_section', action='store_true',
 						help='Encode source track sections.')
-	parser.add_argument('--multi_instruments', type=bool, default=False,
+	parser.add_argument('--multi_instruments', action='store_true',
 						help='Use multiple instruments to generate a single sample from the prime file.')
 	return parser.parse_args()
 
@@ -92,9 +95,18 @@ def main():
 		os.makedirs(args.save_dir)
 		utils.log('Created directory {}'.format(args.save_dir), args.verbose)
 
-	model, epoch = train.get_model(args, experiment_dir=experiment_dir)
-	utils.log('Model loaded from {}'.format(os.path.join(experiment_dir, 'model.json')),
-			  args.verbose)
+	if not args.from_checkpoint:
+		model, epoch = train.get_model(args, experiment_dir=experiment_dir)
+		utils.log('Model loaded from {}'.format(os.path.join(experiment_dir, 'model.json')),
+				  args.verbose)
+	else:
+		# Load from checkpoint
+		with open(os.path.join(experiment_dir, 'model.json'), 'r') as f:
+			model = utils.model_from_json(f.read())
+		epoch = int(args.from_checkpoint)
+		newest_checkpoint = os.path.join(experiment_dir, f"checkpoints/checkpoint-epoch_{args.from_checkpoint}.hdf5")
+		utils.load_checkpoint(model, newest_checkpoint)
+		utils.log('Model loaded from checkpoint {}'.format(newest_checkpoint), args.verbose)
 
 	window_size = model.layers[0].get_input_shape_at(0)[1]
 	seed_generator = utils.get_data_generator(midi_files,

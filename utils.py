@@ -141,9 +141,13 @@ def load_model_from_checkpoint(model_dir):
 
 	if newest_checkpoint:
 		epoch = int(newest_checkpoint[len(newest_checkpoint) - 8:len(newest_checkpoint) - 5])
-		model.load_weights(newest_checkpoint)
+		load_checkpoint(model, newest_checkpoint)
 
 	return model, epoch
+
+
+def load_checkpoint(model, checkpoint):
+	model.load_weights(checkpoint)
 
 
 def generate(model, seeds, window_size, length, num_to_gen, instrument_name):

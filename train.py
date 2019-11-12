@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import os, argparse, time
 import utils
+from utils import log
 from keras.models import Sequential
 from keras.layers import Dense, Activation, Dropout
 from keras.layers import LSTM
@@ -13,7 +14,7 @@ OUTPUT_SIZE = 129  # 0-127 notes + 1 for rests
 def parse_args():
 	parser = argparse.ArgumentParser(
 		formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-	parser.add_argument('--data_dir', type=str, default='data/midi',
+	parser.add_argument('--data_dir', type=str, default='data',
 						help='data directory containing .mid files to use for' \
 							 'training')
 	parser.add_argument('--experiment_dir', type=str,
@@ -53,13 +54,13 @@ def parse_args():
 						help='The maximum number of midi files to load into RAM at once.' \
 							 ' A higher value trains faster but uses more RAM. A lower value ' \
 							 'uses less RAM but takes significantly longer to train.')
-	parser.add_argument('--use_instrument', type=bool, default=False,
+	parser.add_argument('--use_instrument', action='store_true',
 						help='Use instrument type in input.')
-	parser.add_argument('--ignore_empty', type=bool, default=False,
+	parser.add_argument('--ignore_empty', action='store_true',
 						help='Ignore empty windows.')
-	parser.add_argument('--encode_section', type=bool, default=False,
+	parser.add_argument('--encode_section', action='store_true',
 						help='Encode source track sections.')
-	parser.add_argument('--use_simple', type=bool, default=False,
+	parser.add_argument('--use_simple', action='store_true',
 						help='Use the basic network architecture')
 	return parser.parse_args()
 
@@ -163,6 +164,10 @@ def get_model(args, experiment_dir=None):
 def get_callbacks(experiment_dir, checkpoint_monitor='val_acc'):
 	callbacks = []
 
+	#03: simple rs
+	#04: --dropout 0.3 --rnn_size 128 --optimizer rmsprop --batch_size 256
+	#06: --dropout 0.3 --rnn_size 128 --optimizer rmsprop --batch_size 256 --use_instrument
+
 	# save model checkpoints
 	filepath = os.path.join(experiment_dir,
 							'checkpoints',
@@ -188,7 +193,8 @@ def get_callbacks(experiment_dir, checkpoint_monitor='val_acc'):
 								 write_graph=True,
 								 write_images=False,
 								 update_freq='batch',
-								 profile_batch=0))
+								 profile_batch=0
+								 ))
 
 	return callbacks
 
