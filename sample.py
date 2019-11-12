@@ -219,7 +219,7 @@ def main():
 		generated = utils.generate(model, X, window_size,
 								   args.file_length, args.num_files, args.midi_instrument, use_instrument=args.use_instrument, encode_section=args.encode_section)
 		for i, midi in enumerate(generated):
-			file = os.path.join(args.save_dir, '{}.mid'.format(i + 1))
+			file = os.path.join(args.save_dir, f"{i+1}_instrument{midi.instruments[0].program}.mid")
 			midi.write(file.format(i + 1))
 			utils.log('wrote midi file to {}'.format(file), True)
 

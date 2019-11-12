@@ -189,23 +189,32 @@ def generate(model, seeds, window_size, length, num_to_gen, instrument_name, use
 	# generate a pretty midi file from a model using a seed
 	def _gen(model, seed, window_size, length, use_instrument = False, encode_section = False):
 
+		output_size = seed.shape[1]
+		if use_instrument:
+			output_size -= 1
+		if encode_section:
+			output_size -= 4
+
 		generated = []
 		# ring buffer
 		buf = np.copy(seed).tolist()
-		instrument = buf[0][0]
+		if encode_section:
+			instrument = buf[0][4]
+		else:
+			instrument = buf[0][0]
 		while len(generated) < length:
 			buf_expanded = [x for x in buf]
 
 			# Add instrument class to input only on first run
-			if use_instrument and len(generated) != 0:
-				buf_expanded = [[instrument] + x for x in buf_expanded]
+			if use_instrument:
+				buf_expanded = [[instrument] + x if len(x)==output_size else x for x in buf_expanded]
 
 			# Add section encoding to input
-			if encode_section and len(generated) != 0:
+			if encode_section:
 				sections = [0] * 4
 				active_section = int((len(generated) / length) * 4)
 				sections[active_section] = 1
-				buf_expanded = [sections + x for x in buf_expanded]
+				buf_expanded = [sections + x if len(x)<=output_size+1 else x for x in buf_expanded]
 
 			arr = np.expand_dims(np.asarray(buf_expanded), 0)
 			pred = model.predict(arr)
@@ -214,21 +223,27 @@ def generate(model, seeds, window_size, length, num_to_gen, instrument_name, use
 			# index = np.argmax(pred)
 
 			# prob distrobuition sampling
-			index = np.random.choice(range(0, seed.shape[1]), p=pred[0])
-			pred = np.zeros(seed.shape[1])
+			index = np.random.choice(range(0, output_size), p=pred[0])
+			pred = np.zeros(output_size)
 
 			pred[index] = 1
 			generated.append(pred)
 			buf.pop(0)
-			buf.append(pred)
+			buf.append(pred.tolist())
 
-		return generated
+		instrument_program = None
+		if use_instrument:
+			instrument_program = get_family_instrument_by_normalized_class(instrument)  # Convert from normalized family class back to instrument
+		return generated, instrument_program
 
 	midis = []
 	for i in range(0, num_to_gen):
 		seed = seeds[random.randint(0, len(seeds) - 1)]
-		gen = _gen(model, seed, window_size, length, use_instrument=use_instrument, encode_section=encode_section)
-		midis.append(_network_output_to_midi(gen, instrument_name))
+		gen, instrument_program = _gen(model, seed, window_size, length, use_instrument=use_instrument, encode_section=encode_section)
+		if instrument_program != None:
+			midis.append(_network_output_to_midi(gen, instrument_program=instrument_program))
+		else:
+			midis.append(_network_output_to_midi(gen, instrument_name=instrument_name))
 	return midis
 
 
@@ -272,12 +287,19 @@ def _network_output_to_instrument(windows,
 # create a pretty midi file with a single instrument using the one-hot encoding
 # output of keras model.predict.
 def _network_output_to_midi(windows,
-							instrument_name='Acoustic Grand Piano',
+							instrument_name=None,
+							instrument_program=None,
 							allow_represses=False):
 	# Create a PrettyMIDI object
 	midi = pretty_midi.PrettyMIDI()
 	# Create an Instrument instance
-	instrument_program = pretty_midi.instrument_name_to_program(instrument_name)
+
+	if instrument_program is None and instrument_name is None:
+		instrument_program = 0
+	elif instrument_program is not None:
+		pass
+	elif instrument_name is not None:
+		instrument_program = pretty_midi.instrument_name_to_program(instrument_name)
 	instrument = _network_output_to_instrument(windows, instrument_program)
 
 	# Add the instrument to the PrettyMIDI object
@@ -288,6 +310,7 @@ def _network_output_to_midi(windows,
 # Read instruments (map program id to instrument family)
 instruments = defaultdict(lambda: 0)  # Default = 0 (piano)
 families = []
+family_instruments = []
 with open('instruments.json') as json_file:
 	data = json.load(json_file)
 	for instrument in data:
@@ -296,12 +319,18 @@ with open('instruments.json') as json_file:
 			fam_id = families.index(instrument['family'])
 		else:
 			fam_id = len(families)
+			family_instruments.append(instrument_id)
 			families.append(instrument['family'])
 		instruments[instrument_id] = fam_id
 
 
 def get_family_id_by_instrument_normalized(instrument_id):
 	return instruments[instrument_id] / len(families)
+
+
+def get_family_instrument_by_normalized_class(normalized_class):
+	fam_id = int(normalized_class * len(families))
+	return family_instruments[fam_id]
 
 
 # returns X, y data windows from all monophonic instrument
