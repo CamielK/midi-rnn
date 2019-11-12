@@ -1,5 +1,9 @@
 #!/usr/bin/env python
+import json
 import os, argparse, time
+import pickle
+import random
+
 import utils
 from utils import log
 from keras.models import Sequential
@@ -62,6 +66,8 @@ def parse_args():
 						help='Encode source track sections.')
 	parser.add_argument('--use_simple', action='store_true',
 						help='Use the basic network architecture')
+	parser.add_argument('--pickle_file', type=str, default=None,
+						help='Load training data from given pickle file if this param is set')
 	return parser.parse_args()
 
 
@@ -167,6 +173,8 @@ def get_callbacks(experiment_dir, checkpoint_monitor='val_acc'):
 	#03: simple rs
 	#04: --dropout 0.3 --rnn_size 128 --optimizer rmsprop --batch_size 256
 	#06: --dropout 0.3 --rnn_size 128 --optimizer rmsprop --batch_size 256 --use_instrument
+	#08: --dropout 0.5 --rnn_size 64 --optimizer rmsprop --batch_size 256
+	#16: --dropout 0.4 --rnn_size 64 --optimizer rmsprop --batch_size 256 --pickle_file pickle-data/dataset_20191112_152748.pkl
 
 	# save model checkpoints
 	filepath = os.path.join(experiment_dir,
@@ -203,60 +211,87 @@ def main():
 	args = parse_args()
 	args.verbose = True
 
-	try:
-		# get paths to midi files in --data_dir
-		midi_files = [os.path.join(args.data_dir, path) \
-					  for path in os.listdir(args.data_dir) \
-					  if '.mid' in path or '.midi' in path]
-	except OSError as e:
-		log('Error: Invalid --data_dir, {} directory does not exist. Exiting.', args.verbose)
-		exit(1)
-
-	utils.log(
-		'Found {} midi files in {}'.format(len(midi_files), args.data_dir),
-		args.verbose
-	)
-
-	if len(midi_files) < 1:
-		utils.log(
-			'Error: no midi files found in {}. Exiting.'.format(args.data_dir),
-			args.verbose
-		)
-		exit(1)
-
 	# create the experiment directory and return its name
 	experiment_dir = utils.create_experiment_dir(args.experiment_dir, args.verbose)
 
-	# write --message to experiment_dir
-	if args.message:
-		with open(os.path.join(experiment_dir, 'message.txt'), 'w') as f:
-			f.write(args.message)
-			utils.log('Wrote {} bytes to {}'.format(len(args.message),
-													os.path.join(experiment_dir, 'message.txt')), args.verbose)
+	with open(os.path.join(experiment_dir, 'arguments.json'), 'w') as f:
+		json.dump(args.__dict__, f, indent=2)
 
-	val_split = 0.2  # use 20 percent for validation
-	val_split_index = int(float(len(midi_files)) * val_split)
+	val_split = 0.3  # use 30 percent for validation
+	num_tracks = 0
 
-	# use generators to lazy load train/validation data, ensuring that the
-	# user doesn't have to load all midi files into RAM at once
-	train_generator = utils.get_data_generator(midi_files[0:val_split_index],
-											   window_size=args.window_size,
-											   batch_size=args.batch_size,
-											   num_threads=args.n_jobs,
-											   use_instrument=args.use_instrument,
-											   ignore_empty=args.ignore_empty,
-											   encode_section=args.encode_section,
-											   max_files_in_ram=args.max_files_in_ram)
+	if args.pickle_file is not None:
+		if not os.path.exists(args.pickle_file):
+			utils.log('Error: pickle file {} does not exist. Exiting.'.format(args.pickle_file), True)
+			exit(1)
+		with open(args.pickle_file, 'rb') as file:
+			tracks = pickle.load(file)
+			random.shuffle(tracks)  # individual tracks can be randomized
 
-	val_generator = utils.get_data_generator(midi_files[val_split_index:],
-											 window_size=args.window_size,
-											 batch_size=args.batch_size,
-											 num_threads=args.n_jobs,
-											 use_instrument=args.use_instrument,
-											 ignore_empty=args.ignore_empty,
-											 encode_section=args.encode_section,
-											 max_files_in_ram=args.max_files_in_ram)
+		num_tracks = len(tracks)
+		val_split_index = int(float(num_tracks) * val_split)
 
+		train_generator = utils.get_prepared_data_generator(tracks[val_split_index:],
+												   window_size=args.window_size,
+												   batch_size=args.batch_size,
+												   use_instrument=args.use_instrument,
+												   ignore_empty=args.ignore_empty,
+												   encode_section=args.encode_section,
+													max_tracks_in_ram=args.max_files_in_ram)
+		val_generator = utils.get_prepared_data_generator(tracks[0:val_split_index],
+												   window_size=args.window_size,
+												   batch_size=args.batch_size,
+												   use_instrument=args.use_instrument,
+												   ignore_empty=args.ignore_empty,
+												   encode_section=args.encode_section,
+													max_tracks_in_ram=args.max_files_in_ram,
+														  shuffle_batches=True)
+	else:
+		try:
+			# get paths to midi files in --data_dir
+			midi_files = [os.path.join(args.data_dir, path) \
+						  for path in os.listdir(args.data_dir) \
+						  if '.mid' in path or '.midi' in path]
+		except OSError as e:
+			log('Error: Invalid --data_dir, {} directory does not exist. Exiting.', args.verbose)
+			exit(1)
+
+		utils.log(
+			'Found {} midi files in {}'.format(len(midi_files), args.data_dir),
+			args.verbose
+		)
+
+		if len(midi_files) < 1:
+			utils.log(
+				'Error: no midi files found in {}. Exiting.'.format(args.data_dir),
+				args.verbose
+			)
+			exit(1)
+
+		num_tracks = len(midi_files)
+		val_split_index = int(float(num_tracks) * val_split)
+
+		# use generators to lazy load train/validation data, ensuring that the
+		# user doesn't have to load all midi files into RAM at once
+		train_generator = utils.get_data_generator(midi_files[0:val_split_index],
+												   window_size=args.window_size,
+												   batch_size=args.batch_size,
+												   num_threads=args.n_jobs,
+												   use_instrument=args.use_instrument,
+												   ignore_empty=args.ignore_empty,
+												   encode_section=args.encode_section,
+												   max_files_in_ram=args.max_files_in_ram)
+
+		val_generator = utils.get_data_generator(midi_files[val_split_index:],
+												 window_size=args.window_size,
+												 batch_size=args.batch_size,
+												 num_threads=args.n_jobs,
+												 use_instrument=args.use_instrument,
+												 ignore_empty=args.ignore_empty,
+												 encode_section=args.encode_section,
+												 max_files_in_ram=args.max_files_in_ram)
+
+	# Load model
 	model, epoch = get_model(args)
 	if args.verbose:
 		print(model.summary())
@@ -268,15 +303,13 @@ def main():
 	callbacks = get_callbacks(experiment_dir)
 
 	print('fitting model...')
-	# this is a somewhat magic number which is the average number of length-20 windows
-	# calculated from ~5K MIDI files from the Lakh MIDI Dataset.
-	magic_number = 827
+	magic_number = 500
 	start_time = time.time()
 	model.fit_generator(train_generator,
-						steps_per_epoch=len(midi_files) * magic_number / args.batch_size,
+						steps_per_epoch= num_tracks * magic_number / args.batch_size,
 						epochs=args.num_epochs,
 						validation_data=val_generator,
-						validation_steps=len(midi_files) * 0.2 * magic_number / args.batch_size,
+						validation_steps= num_tracks * .1 * magic_number / args.batch_size,
 						verbose=1,
 						callbacks=callbacks,
 						initial_epoch=epoch)

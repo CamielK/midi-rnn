@@ -153,14 +153,14 @@ def main():
 		# melody_instruments = utils.filter_monophonic(source_midi.instruments, 1.0)
 
 		for instrument in melody_instruments:
-			instrument_group = utils.get_family_id_by_instrument(instrument.program)
+			instrument_group = utils.get_family_id_by_instrument_normalized(instrument.program)
 
 			# Get source track seed
 			X, y = [], []
 			windows = utils._encode_sliding_windows(instrument, window_size)
 			for w in windows:
 				if np.min(w[0][:, 0]) == 1:
-					# Window only contains pauses and Y is also a pause.. ignore!
+					# Window only contains pauses.. ignore!
 					continue
 				X.append(w[0])
 			if len(X) <= 5:
@@ -171,17 +171,18 @@ def main():
 			generated = []
 			buf = np.copy(seed).tolist()
 			while len(generated) < args.file_length:
+				buf_expanded = [x for x in buf]
 
 				# Add instrument class to input
 				if args.use_instrument:
-					buf_expanded = [[instrument_group] + x for x in buf]
+					buf_expanded = [[instrument_group] + x for x in buf_expanded]
 
 				# Add section encoding to input
 				if args.encode_section:
 					sections = [0] * 4
 					active_section = int((len(generated) / args.file_length) * 4)
 					sections[active_section] = 1
-					buf_expanded = [sections + x for x in buf]
+					buf_expanded = [sections + x for x in buf_expanded]
 
 				# Get prediction
 				arr = np.expand_dims(np.asarray(buf_expanded), 0)
@@ -216,7 +217,7 @@ def main():
 		utils.log('Loading seed files...', args.verbose)
 		X, y = next(seed_generator)
 		generated = utils.generate(model, X, window_size,
-								   args.file_length, args.num_files, args.midi_instrument)
+								   args.file_length, args.num_files, args.midi_instrument, use_instrument=args.use_instrument, encode_section=args.encode_section)
 		for i, midi in enumerate(generated):
 			file = os.path.join(args.save_dir, '{}.mid'.format(i + 1))
 			midi.write(file.format(i + 1))

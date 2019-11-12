@@ -79,6 +79,41 @@ def create_experiment_dir(experiment_dir, verbose=False):
 	return experiment_dir
 
 
+# load data from prepared datset containing instrument tracks
+# Shuffle batches should be false for training!!
+def get_prepared_data_generator(all_tracks, window_size=20, batch_size=32,
+					   use_instrument=False, ignore_empty=False, encode_section=False,
+					   max_tracks_in_ram=170, shuffle_batches=False):
+	load_index = 0
+
+	while True:
+
+		if not shuffle_batches:
+			tracks = all_tracks[load_index:load_index + max_tracks_in_ram]
+			load_index = (load_index + max_tracks_in_ram) % len(tracks)
+		else:
+			# Select a random subset of tracks, this should only be used for validation
+			tracks = random.sample(all_tracks, max_tracks_in_ram)
+
+		# Get windows from tracks
+		# print('Finished in {:.2f} seconds'.format(time.time() - start_time))
+		# print('parsed, now extracting data')
+		data = _windows_from_tracks(tracks, window_size, use_instrument, ignore_empty, encode_section)
+		batch_index = 0
+		while batch_index + batch_size < len(data[0]):
+			# print('getting data...')
+			# print('yielding small batch: {}'.format(batch_size))
+
+			res = (data[0][batch_index: batch_index + batch_size],
+				   data[1][batch_index: batch_index + batch_size])
+			yield res
+			batch_index = batch_index + batch_size
+
+		# probably unneeded but why not
+		del tracks  # free the mem
+		del data  # free the mem
+
+
 # load data with a lazzy loader
 def get_data_generator(midi_paths,
 					   window_size=20,
@@ -150,15 +185,29 @@ def load_checkpoint(model, checkpoint):
 	model.load_weights(checkpoint)
 
 
-def generate(model, seeds, window_size, length, num_to_gen, instrument_name):
+def generate(model, seeds, window_size, length, num_to_gen, instrument_name, use_instrument = False, encode_section = False):
 	# generate a pretty midi file from a model using a seed
-	def _gen(model, seed, window_size, length):
+	def _gen(model, seed, window_size, length, use_instrument = False, encode_section = False):
 
 		generated = []
 		# ring buffer
 		buf = np.copy(seed).tolist()
+		instrument = buf[0][0]
 		while len(generated) < length:
-			arr = np.expand_dims(np.asarray(buf), 0)
+			buf_expanded = [x for x in buf]
+
+			# Add instrument class to input only on first run
+			if use_instrument and len(generated) != 0:
+				buf_expanded = [[instrument] + x for x in buf_expanded]
+
+			# Add section encoding to input
+			if encode_section and len(generated) != 0:
+				sections = [0] * 4
+				active_section = int((len(generated) / length) * 4)
+				sections[active_section] = 1
+				buf_expanded = [sections + x for x in buf_expanded]
+
+			arr = np.expand_dims(np.asarray(buf_expanded), 0)
 			pred = model.predict(arr)
 
 			# argmax sampling (NOT RECOMMENDED), or...
@@ -178,7 +227,7 @@ def generate(model, seeds, window_size, length, num_to_gen, instrument_name):
 	midis = []
 	for i in range(0, num_to_gen):
 		seed = seeds[random.randint(0, len(seeds) - 1)]
-		gen = _gen(model, seed, window_size, length)
+		gen = _gen(model, seed, window_size, length, use_instrument=use_instrument, encode_section=encode_section)
 		midis.append(_network_output_to_midi(gen, instrument_name))
 	return midis
 
@@ -287,12 +336,51 @@ def _windows_from_monophonic_instruments(midi, window_size, use_instrument=False
 	return (np.asarray(X), np.asarray(y))
 
 
+# returns X, y data windows from all tracks
+def _windows_from_tracks(tracks, window_size, use_instrument=False, ignore_empty=False, encode_section=False):
+	X, y = [], []
+	for instrument in tracks:
+		roll = instrument['roll']
+		if len(roll) > window_size:
+			windows = []
+			for i in range(0, roll.shape[0] - window_size - 1):
+				windows.append((roll[i:i + window_size], roll[i + window_size + 1]))
+			instrument_group = instrument['instrument']
+			track_length = len(windows)
+			for section, w in enumerate(windows):
+				x_vals = w[0]
+				if ignore_empty and np.min(w[0][:, 0]) == 1 and w[1][0] == 1:
+					# Window only contains pauses and Y is also a pause.. ignore!
+					continue
+				if use_instrument:
+					# Append instrument class to input (normalized to 0>1)
+					x_vals = np.insert(x_vals, 0, instrument_group, axis=1)
+				if encode_section:
+					# Append track section to input (try to model intro, chorus, outro, etc)
+					sections = [0] * 4
+					active_section = int((section / track_length) * 4)
+					sections[active_section] = 1
+					section_matrix = np.array([sections,] * window_size)
+					x_vals = np.concatenate((section_matrix, x_vals), axis=1)
+				X.append(x_vals)
+				y.append(w[1])
+	return (np.asarray(X), np.asarray(y))
+
+
 # one-hot encode a sliding window of notes from a pretty midi instrument.
+# expects pm_instrument to be monophonic.
+def _encode_sliding_windows(pm_instrument, window_size):
+	roll = get_instrument_roll(pm_instrument)
+	windows = []
+	for i in range(0, roll.shape[0] - window_size - 1):
+		windows.append((roll[i:i + window_size], roll[i + window_size + 1]))
+	return windows
+
+
 # This approach uses the piano roll method, where each step in the sliding
 # window represents a constant unit of time (fs=4, or 1 sec / 4 = 250ms).
 # This allows us to encode rests.
-# expects pm_instrument to be monophonic.
-def _encode_sliding_windows(pm_instrument, window_size):
+def get_instrument_roll(pm_instrument):
 	roll = np.copy(pm_instrument.get_piano_roll(fs=4).T)
 
 	# trim beginning silence
@@ -312,8 +400,4 @@ def _encode_sliding_windows(pm_instrument, window_size):
 	rests = np.sum(roll, axis=1)
 	rests = (rests != 1).astype(float)
 	roll = np.insert(roll, 0, rests, axis=1)
-
-	windows = []
-	for i in range(0, roll.shape[0] - window_size - 1):
-		windows.append((roll[i:i + window_size], roll[i + window_size + 1]))
-	return windows
+	return roll
